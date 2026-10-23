@@ -215,8 +215,11 @@ export const register: Register = on => {
   })
 
   // The person's close (the mark, Esc, or the ✕ chip) sticks until the next pin.
-  on('ui.close', async (_$, e, next) => {
-    if (e.id === PANE) local.paneIsPlaced = false
+  on('ui.close', async ($, e, next) => {
+    if (e.id === PANE) {
+      local.paneIsPlaced = false
+      await signal($)
+    }
     return next(e)
   })
 
@@ -444,7 +447,10 @@ export const register: Register = on => {
   // ---- the pane -----------------------------------------------------------
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    local.paneIsPlaced = true
+    if (!local.paneIsPlaced) {
+      local.paneIsPlaced = true
+      $.ui.status(undefined)
+    }
     const [list, s, l] = await Promise.all([read($, items), read($, settings), read($, live)])
     const now = await $.clock.now()
     const open = openItems(list)
@@ -726,6 +732,7 @@ async function setItems($: $T, next: Item[]) {
     }
   }
   await resize($)
+  await signal($)
 }
 
 async function setSettings($: $T, patch: Partial<PaneSettings>) {
@@ -769,6 +776,17 @@ async function openArgs($: $T) {
   }
 }
 
+// While items wait and the pane is not on screen (closed by hand, or an unasked
+// open held back on a narrow terminal), a pinned line under the prompt says so.
+async function signal($: $T) {
+  const waiting = openItems(await read($, items)).length
+  if (waiting > 0 && !local.paneIsPlaced) {
+    $.ui.status(`Needs you: ${waiting} waiting · /needs-you`)
+  } else {
+    $.ui.status(undefined)
+  }
+}
+
 async function closePane($: $T) {
   local.paneIsPlaced = false
   try {
@@ -776,6 +794,7 @@ async function closePane($: $T) {
   } catch (err) {
     $.ui.toast(`Needs you: could not close (${String(err)})`)
   }
+  await signal($)
 }
 
 // A new item. `isCounted: false` (the reply catcher, the person's own `add`)
@@ -794,6 +813,7 @@ async function pin(
   const opened = await $.ui.open(await openArgs($))
   local.paneIsPlaced = opened.isPlaced
   if (!opened.isPlaced) $.ui.toast(`Needs you #${item.n}: ${item.title} (/needs-you)`, { timeoutMs: 8000 })
+  await signal($)
   return { item, isPlaced: opened.isPlaced }
 }
 
