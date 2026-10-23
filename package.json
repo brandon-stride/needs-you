@@ -1,0 +1,14 @@
+{
+  "name": "needs-you",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Claude Code mod: a side pane for everything Claude needs from you",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p .",
+    "test": "claude plugin test .",
+    "validate": "claude plugin validate ."
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "name": "needs-you",
+  "version": "0.1.0",
+  "description": "A side pane that pins everything Claude needs from you (decide, do, know), takes your answers in place, and quiets the transcript while Claude works",
+  "types": "./types/index.d.ts"
+}
