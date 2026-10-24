@@ -117,6 +117,8 @@ const local = {
   pictures: true,
   frameKey: '',
   reaction: undefined as { kind: Reaction; until: number } | undefined,
+  // Unanswered items while the pane is off screen: what the hint line shows.
+  offScreen: 0,
 }
 
 const SECTION = {
@@ -421,6 +423,15 @@ export const register: Register = on => {
     return <Box display="none" />
   })
 
+  // While items wait and the pane is off screen, a few dim characters at the
+  // end of the hint line under the prompt (`? for shortcuts`) say so: no row of
+  // their own, nothing pinned.
+  on('ui.render', { component: 'PromptHint' }, async (_$, e, next) => {
+    if (!local.offScreen) return next(e)
+    const tail = `${e.props.tail ?? ''}  ● ${local.offScreen} needs you`
+    return next({ ...e, props: { ...e.props, tail } })
+  })
+
   on('ui.render', { component: 'ToolProgress' }, async ($, e, next) => {
     const s = await read($, settings)
     return s.focus ? next({ ...e, props: { ...e.props, hint: '' } }) : next(e)
@@ -454,7 +465,7 @@ export const register: Register = on => {
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     if (!local.paneIsPlaced) {
       local.paneIsPlaced = true
-      $.ui.status(undefined)
+      await signal($)
     }
     const [list, s, l] = await Promise.all([read($, items), read($, settings), read($, live)])
     const now = await $.clock.now()
@@ -797,10 +808,10 @@ async function openArgs($: $T) {
 // open held back on a narrow terminal), a pinned line under the prompt says so.
 async function signal($: $T) {
   const waiting = openItems(await read($, items)).filter(i => i.status === 'open').length
-  if (waiting > 0 && !local.paneIsPlaced) {
-    $.ui.status(`Needs you: ${waiting} waiting · /needs-you`)
-  } else {
-    $.ui.status(undefined)
+  const next = waiting > 0 && !local.paneIsPlaced ? waiting : 0
+  if (next !== local.offScreen) {
+    local.offScreen = next
+    $.ui.invalidate('ui.render')
   }
 }
 
