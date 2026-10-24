@@ -205,8 +205,14 @@ export const register: Register = on => {
         immediate: true,
       }),
     ])
-    const opened = await $.ui.open(await openArgs($))
-    local.paneIsPlaced = opened.isPlaced
+    // Open at startup (a new session, or a reload) only when restored items are
+    // waiting; otherwise the first pin or /needs-you opens it.
+    if (openItems(await read($, items)).length > 0) {
+      const opened = await $.ui.open(await openArgs($))
+      local.paneIsPlaced = opened.isPlaced
+    } else {
+      local.paneIsPlaced = (await $.ui.panes()).some(p => p.id === PANE)
+    }
     timer?.cancel()
     timer = $.clock.every(TICK_MS, () => {
       void tick($).catch(() => undefined)
