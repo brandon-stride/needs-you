@@ -645,11 +645,14 @@ export const register: Register = on => {
                     </Text>
                   </Box>
                 ))}
-                <Box flexDirection="row" paddingLeft={4}>
+                {/* The field needs a width of its own, or a long note runs off the card:
+                    pane padding (2), the colour bar (1), card padding (2), the indent (4). */}
+                <Box flexDirection="row" paddingLeft={4} width={width - 2}>
                   <Input
                     key={`n:${i.id}`}
                     placeholder="✎ add a note"
                     submitLabel=" "
+                    rows={2}
                     value={local.drafts[i.id] ?? ''}
                     onInput={v => {
                       local.drafts[i.id] = v
