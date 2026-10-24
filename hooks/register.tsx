@@ -260,7 +260,7 @@ export const register: Register = on => {
     const list = await read($, items)
     const item = findByN(list, n)
     if (!item) return { result: `No item #${n}.` }
-    await setItems($, list.map(i => (i.n === n ? { ...i, status: 'done' as const } : i)))
+    await setItems($, cur => cur.map(i => (i.n === n ? { ...i, status: 'done' as const } : i)))
     return { result: `#${n} resolved.` }
   }).catch(() => ({ result: 'The Needs-you pane failed to resolve that item; carry on.' }))
 
@@ -277,7 +277,7 @@ export const register: Register = on => {
       options: args.options ?? item.options,
     })
     if (!parsed.ok) return { result: `Not changed: ${parsed.why}.` }
-    await setItems($, list.map(i => (i.n === n ? { ...i, ...parsed.pin } : i)))
+    await setItems($, cur => cur.map(i => (i.n === n ? { ...i, ...parsed.pin } : i)))
     return { result: `#${n} updated.` }
   }).catch(() => ({ result: 'The Needs-you pane failed to update that item; carry on.' }))
 
@@ -315,7 +315,7 @@ export const register: Register = on => {
     const at = await $.clock.now()
     const list = await read($, items)
     const seen = markSeen(list, e.turnId, at, e.agentId, local.holding)
-    if (seen.some((i, k) => i !== list[k])) await setItems($, seen)
+    if (seen.some((i, k) => i !== list[k])) await setItems($, cur => markSeen(cur, e.turnId, at, e.agentId, local.holding))
     return yield* next(e)
   })
 
@@ -335,7 +335,7 @@ export const register: Register = on => {
     if (fold.length) await update($, interim, prev => [...prev, ...fold.filter(id => !prev.includes(id))].slice(-INTERIM_CAP))
     const list = await read($, items)
     const kept = archiveSeen(list, e.turnId)
-    if (kept.some((i, k) => i !== list[k])) await setItems($, kept)
+    if (kept.some((i, k) => i !== list[k])) await setItems($, cur => archiveSeen(cur, e.turnId))
     const s = await read($, settings)
     if (s.catch && e.reason === 'answer' && l.pinsThisTurn === 0 && hasCue(e.answer)) {
       const answer = e.answer
@@ -380,8 +380,7 @@ export const register: Register = on => {
       return { text: `Pinned #${item.n}: ${item.title}` }
     }
     if (verb === 'clear') {
-      const list = await read($, items)
-      await setItems($, list.map(i => (i.status === 'open' ? i : { ...i, status: 'done' as const })))
+      await setItems($, cur => cur.map(i => (i.status === 'open' ? i : { ...i, status: 'done' as const })))
       return { text: 'Answered items cleared.' }
     }
     const opened = await $.ui.open({ ...(await openArgs($)), focus: true })
@@ -461,6 +460,8 @@ export const register: Register = on => {
     const now = await $.clock.now()
     const open = openItems(list)
     const done = doneItems(list)
+    // Only an unanswered item waits on the person; a sent or seen one is Claude's.
+    const waiting = open.filter(i => i.status === 'open').length
     const width = Math.max(24, e.props.bodyColumns)
     const face = { open: open.length, isFresh: now - l.lastPinAt < FRESH_MS, tick: Math.floor(now / 900), seed: open.length * 7 + done.length }
     const frame = frameAt(await scene($))
@@ -543,7 +544,7 @@ export const register: Register = on => {
           {mascot}
           <Box flexDirection="row" gap={1}>
             <Text bold color={open.length ? INK.decide : INK.mute}>
-              {open.length ? `${open.length} waiting` : 'all clear'}
+              {waiting ? `${waiting} waiting` : 'all clear'}
             </Text>
             {chip('view', '▸ open', () => void setSettings($, { view: 'list' }))}
           </Box>
@@ -560,7 +561,7 @@ export const register: Register = on => {
             </Text>
             {/* Under 40 columns the count alone, so the header keeps one row. */}
             <Text dimColor>
-              {width < 40 ? (open.length ? String(open.length) : '') : open.length ? `${open.length} waiting on you` : 'nothing waiting'}
+              {width < 40 ? (waiting ? String(waiting) : '') : waiting ? `${waiting} waiting on you` : open.length ? 'with Claude' : 'nothing waiting'}
             </Text>
           </Box>
           <Box flexDirection="row" gap={1}>
@@ -728,8 +729,11 @@ async function pruneStore($: $T) {
   for (const { key } of kept.slice(KEEP_SESSIONS)) await $.store.delete(key)
 }
 
-async function setItems($: $T, next: Item[]) {
-  await update($, items, () => next)
+// Every change to the list goes through one atomic update over the latest
+// value: a hook that read the list before a tool call wrote it (a turn step
+// marking "seen" around a resolve) must not put the old list back.
+async function setItems($: $T, fn: (list: readonly Item[]) => Item[]) {
+  const next = await update($, items, fn)
   // The list in memory is what counts; a failed save (a full store) costs only
   // the copy a restart would read, so it is said once and the work goes on.
   try {
@@ -789,7 +793,7 @@ async function openArgs($: $T) {
 // While items wait and the pane is not on screen (closed by hand, or an unasked
 // open held back on a narrow terminal), a pinned line under the prompt says so.
 async function signal($: $T) {
-  const waiting = openItems(await read($, items)).length
+  const waiting = openItems(await read($, items)).filter(i => i.status === 'open').length
   if (waiting > 0 && !local.paneIsPlaced) {
     $.ui.status(`Needs you: ${waiting} waiting · /needs-you`)
   } else {
@@ -817,7 +821,7 @@ async function pin(
   const now = await $.clock.now()
   const list = await read($, items)
   const item = newItem(list, p, o.from ?? (await whoAsked($, o.agentId)), now, o.agentId)
-  await setItems($, [...list, item])
+  await setItems($, cur => [...cur, item])
   const counted = o.isCounted === false ? 0 : 1
   await update($, live, l => ({ ...l, pinsThisTurn: l.pinsThisTurn + counted, lastPinAt: now }))
   const opened = await $.ui.open(await openArgs($))
@@ -900,8 +904,7 @@ async function handleAnswer($: $T, id: string, given: Answer) {
 }
 
 async function patchItem($: $T, id: string, fn: (i: Item) => Item) {
-  const list = await read($, items)
-  await setItems($, list.map(i => (i.id === id ? fn(i) : i)))
+  await setItems($, cur => cur.map(i => (i.id === id ? fn(i) : i)))
 }
 
 function sameNote(n: Note, note: Note | undefined): boolean {
@@ -1007,9 +1010,8 @@ async function rescueFromAgent($: $T, agentId: string) {
   if (!texts.length) return
   for (const text of texts) await appendRow($, text)
   const at = await $.clock.now()
-  await setItems(
-    $,
-    (await read($, items)).map(i => {
+  await setItems($, cur =>
+    cur.map(i => {
       let next = i
       if (i.status === 'sent' && i.sentTo === agentId) {
         next = { ...next, sentAt: at }
