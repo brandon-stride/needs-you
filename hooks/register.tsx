@@ -583,11 +583,15 @@ export const register: Register = on => {
               <Box key={`row:${i.id}`} flexDirection="row" marginBottom={1}>
                 <Box width={1} flexShrink={0} backgroundColor={INK.mute} />
                 <Box flexDirection="row" flexGrow={1} gap={1} paddingX={1} justifyContent="space-between">
-                  <Text dimColor wrap="truncate-end">
-                    {i.n} {i.title}
-                    {i.answer ? ` → ${i.answer}` : ''}
-                  </Text>
-                  <Text dimColor>{state}</Text>
+                  <Box flexGrow={1} flexShrink={1}>
+                    <Text dimColor wrap="truncate-end">
+                      {i.n} {i.title}
+                      {i.answer ? ` → ${i.answer}` : ''}
+                    </Text>
+                  </Box>
+                  <Box flexShrink={0}>
+                    <Text dimColor>{state}</Text>
+                  </Box>
                 </Box>
               </Box>
             )

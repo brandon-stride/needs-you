@@ -2,7 +2,7 @@
 
 A Claude Code mod. Everything Claude needs from you lands in one side pane: decisions to make, things to do outside the chat, things you should know. You answer there. The transcript stays quiet.
 
-<p align="center"><img src="media/clawd.png" alt="The pixel mascot in thirteen hats" width="680"></p>
+<p align="center"><img src="media/pane.png" alt="The pane: three cards, one per kind, with option chips, a done chip and a got-it chip" width="502"></p>
 
 ## Why
 
@@ -39,6 +39,10 @@ Your answer goes to Claude quietly while a turn runs, or as a prompt when the se
 **Focus mode** (on by default) hides tool rows in the transcript and folds Claude's working narration once a turn ends, so what stays on screen is the answer and the pane. Press `ctrl+o` to see everything, or turn it off below.
 
 **The mascot** is a pixel Clawd who lives in the minimized pane: a random hat, something in hand, a dance while items wait, a reaction when you press something, and a nap when nothing does.
+
+<p align="center"><img src="media/minimized.png" alt="The minimized pane: Clawd, the waiting count, an open chip" width="503"></p>
+
+<p align="center"><img src="media/clawd.png" alt="The pixel mascot in thirteen hats" width="680"></p>
 
 ## Commands
 
