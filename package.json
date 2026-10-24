@@ -3,10 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "description": "Claude Code mod: a side pane for everything Claude needs from you",
+  "license": "MIT",
+  "repository": "github:brandon-stride/needs-you",
   "scripts": {
     "typecheck": "tsc --noEmit -p .",
     "test": "claude plugin test .",
-    "validate": "claude plugin validate ."
+    "validate": "claude plugin validate .",
+    "media": "bun run scripts/render-media.ts"
   },
   "devDependencies": {
     "typescript": "^5.9.3"

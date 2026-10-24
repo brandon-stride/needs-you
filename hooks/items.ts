@@ -302,31 +302,10 @@ export function wantedRows(items: readonly Item[], settings: PaneSettings): numb
   return Math.min(40, Math.max(3, rows))
 }
 
-// ---- the avatar ----------------------------------------------------------
-// The Claude mascot in block characters: a boxy orange body, two eyes, stub
-// arms, three feet. It wears a random hat, holds a random thing, dances on the
-// tick while something is open, and throws the odd emote. Every line is padded
-// to AVATAR_WIDTH so the pane never jitters as frames change.
+// ---- the text face ---------------------------------------------------------
+// Surfaces that draw no pictures (desktop, mobile) get a one-line face instead
+// of the pixel mascot in clawd.ts.
 
-export const AVATAR_WIDTH = 15
-
-// Each hat is 10 columns wide, sitting over the body (columns 1 to 8).
-const HATS = [
-  '  ▟██████▙',  // beanie
-  ' ▂▟████▙▂ ',  // top hat
-  '  ▙▟▙▟▙▟  ',  // crown
-  '    ◢◣    ',  // party cone
-  ' ▂▂████▂▂ ',  // cowboy
-  '  ▟▀▀▀▀▙  ',  // chef
-  '  ╭────╮  ',  // halo
-  '  ─◉──    ',  // propeller
-  '  ▞▀▀▀▀▚  ',  // bucket
-  '  ▁▁▁▁▁▁  ',  // flat cap
-]
-// Things it holds: emoji that every terminal draws two columns wide.
-const THINGS = ['🔧', '🔑', '☕', '📎', '🧭', '🪄', '🎸', '🍕', '🎈', '🔦', '🎺', '🍩', '📣', '🥁', '🎯', '🪁', '🧃', '🛸']
-// Emotes beside the hat; '' is "none this time".
-const EMOTES = ['♪', '♫', '!', '?', '♥', '…', '✦', '~', '', '', '', '']
 const EMOTE_SLEEP = ['z', 'zz', 'zzz']
 
 export type AvatarState = { open: number; isFresh: boolean; tick: number; seed: number }
@@ -340,18 +319,6 @@ function hash(n: number): number {
 
 function pick<T>(list: readonly T[], n: number): T {
   return list[hash(n) % list.length] as T
-}
-
-function pad(line: string): string {
-  const w = cellWidth(line)
-  return w >= AVATAR_WIDTH ? line : line + ' '.repeat(AVATAR_WIDTH - w)
-}
-
-// Columns a string takes: emoji count two, everything here else one.
-function cellWidth(s: string): number {
-  let w = 0
-  for (const ch of s) w += (ch.codePointAt(0) ?? 0) > 0xffff || ch === '☕' ? 2 : 1
-  return w
 }
 
 // What the mascot is doing this tick.
@@ -374,36 +341,3 @@ export function avatarLine(s: AvatarState): string {
   return face.padEnd(AVATAR_LINE_WIDTH, ' ')
 }
 
-// Five lines: hat (+ emote), then the body in four rows. The hat changes every
-// ~40 ticks, the held thing every ~25, the emote every 4; all seeded so two
-// draws of the same tick agree.
-export function avatarBlock(s: AvatarState): string[] {
-  const mood = avatarMood(s)
-  const hat = pick(HATS, s.seed + Math.floor(s.tick / 40))
-  const thing = pick(THINGS, s.seed * 3 + 1 + Math.floor(s.tick / 25))
-  const emote = mood === 'asleep'
-    ? pick(EMOTE_SLEEP, Math.floor(s.tick / 2))
-    : mood === 'surprised'
-      ? (s.tick % 2 ? '!!' : '! ')
-      : pick(EMOTES, s.seed + Math.floor(s.tick / 4))
-
-  const blink = mood === 'asleep' || (mood === 'dancing' && s.tick % 9 === 0)
-  const wide = mood === 'surprised'
-  const eyes = blink ? '██▄██▄██' : wide ? '█▌ ▌▐ ▐█' : '██ ██ ██'
-
-  // Arm pose cycles mid, up, mid, down while dancing; up while surprised; down asleep.
-  const pose = mood === 'dancing' ? (['mid', 'up', 'mid', 'down'] as const)[s.tick % 4] : mood === 'surprised' ? 'up' : 'down'
-  const shift = mood === 'dancing' && s.tick % 2 === 1 ? ' ' : ''
-  const feet = mood === 'dancing' ? (s.tick % 4 < 2 ? '▀▀ ▀▀ ▀▀' : '▀▀  ▀▀ ▀') : '▀▀ ▀▀ ▀▀'
-
-  const row0 = pose === 'up' ? '▝▄██████▄▘' : ' ▄██████▄ '
-  const row1 = pose === 'mid' ? `▐${eyes}▌` : ` ${eyes} `
-  const row2 = pose === 'down' ? '▗████████▖' : ' ████████ '
-  const row3 = ` ${feet} `
-
-  // The held thing rides on the arm row that has the arm.
-  const holdRow = pose === 'up' ? 0 : pose === 'mid' ? 1 : 2
-  const rows = [row0, row1, row2, row3].map((r, k) => (k === holdRow ? `${shift}${r}${thing}` : `${shift}${r}`))
-  const hatLine = `${shift}${hat} ${emote}`
-  return [pad(hatLine), ...rows.map(pad)]
-}

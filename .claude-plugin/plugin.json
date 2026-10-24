@@ -1,6 +1,11 @@
 {
   "name": "needs-you",
   "version": "0.1.0",
-  "description": "A side pane that pins everything Claude needs from you (decide, do, know), takes your answers in place, and quiets the transcript while Claude works",
+  "description": "A side pane that collects everything Claude needs from you: decisions, things to do, things to know. Answer in place; the transcript stays quiet.",
+  "author": { "name": "Brandon Stride" },
+  "homepage": "https://github.com/brandon-stride/needs-you",
+  "repository": "https://github.com/brandon-stride/needs-you",
+  "license": "MIT",
+  "keywords": ["claude-code", "mod", "pane", "decisions", "focus"],
   "types": "./types/index.d.ts"
 }

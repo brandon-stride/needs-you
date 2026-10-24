@@ -1,0 +1,6 @@
+{
+  "name": "needs-you",
+  "description": "needs-you: a Claude Code side pane for everything Claude needs from you",
+  "owner": { "name": "Brandon Stride" },
+  "plugins": [{ "name": "needs-you", "source": "./" }]
+}

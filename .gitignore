@@ -1,2 +1,6 @@
+# Written by Claude Code when the mod loads: the engine's API declarations.
 .claude-plugin/types/
+
 node_modules/
+.DS_Store
+*.log
