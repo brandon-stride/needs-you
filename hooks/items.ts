@@ -62,13 +62,15 @@ function words(text: string): Set<string> {
 
 // The words that tell one ask from a near twin: a name (capitalized past the
 // first word) or anything with a digit (a PR, a version, an amount).
+// Kept whole, however short ("Al", "PR 12").
 function marks(text: string): string[] {
-  return text
-    .split(/[^A-Za-z0-9]+/)
-    .filter(Boolean)
-    .slice(1)
-    .filter(w => /^[A-Z]/.test(w) || /\d/.test(w))
-    .flatMap(w => [...words(w)])
+  return tokens(text)
+    .filter((w, k) => (k > 0 && /^[A-Z]/.test(w)) || /\d/.test(w))
+    .map(w => w.toLowerCase())
+}
+
+function tokens(text: string): string[] {
+  return text.split(/[^A-Za-z0-9]+/).filter(Boolean)
 }
 
 // Two titles asking the same thing: most of the shorter one's words are in the
@@ -78,7 +80,9 @@ function marks(text: string): string[] {
 export function isSameAsk(a: string, b: string): boolean {
   const x = words(a)
   const y = words(b)
-  if (marks(a).some(w => !y.has(w)) || marks(b).some(w => !x.has(w))) return false
+  const rawA = new Set(tokens(a).map(w => w.toLowerCase()))
+  const rawB = new Set(tokens(b).map(w => w.toLowerCase()))
+  if (marks(a).some(w => !rawB.has(w)) || marks(b).some(w => !rawA.has(w))) return false
   let shared = 0
   for (const w of x) if (y.has(w)) shared++
   return shared >= 3 && shared / Math.min(x.size, y.size) >= 0.7

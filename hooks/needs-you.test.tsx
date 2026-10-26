@@ -272,6 +272,9 @@ test('the helpers: parsing, messages, seen and archived', () => {
   expect(isSameAsk('Approve the night job in the dashboard', 'Mint a key for the night job')).toBe(false)
   expect(isSameAsk('Invite Alice to the billing workspace', 'Invite Bob to the billing workspace')).toBe(false)
   expect(isSameAsk('Approve the production deploy for Alpha', 'Approve the production deploy for Bravo')).toBe(false)
+  expect(isSameAsk('Invite Al to the billing workspace', 'Invite Jo to the billing workspace')).toBe(false)
+  expect(isSameAsk('Approve the production deploy for PR 12', 'Approve the production deploy for PR 13')).toBe(false)
+  expect(isSameAsk('12 tests fail on the sign-in page', '13 tests fail on the sign-in page')).toBe(false)
 })
 
 test('the card shows every word of an item and steps to the next once answered', async ($, on) => {
