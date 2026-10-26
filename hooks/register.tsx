@@ -314,21 +314,36 @@ export const register: Register = on => {
   on('prompt.submit', async ($, e, next) => {
     const kind = e.origin.kind
     if (e.command || e.isMeta || (kind !== 'composer' && kind !== 'bridge')) return next(e)
+    // After a /clear or resume the list in memory is the old conversation's
+    // until turn.start restores the new one's: say nothing then.
+    let isSameSession = false
+    try {
+      isSameSession = (await $.session.id()) === local.sessionId
+    } catch {
+      isSameSession = false
+    }
+    if (!isSameSession) return next(e)
+    // A note typed after the pane's prefix: once the prompt has entered (a
+    // hook beneath may refuse it), the card shows it; the message itself is
+    // what carries it to the model.
+    const note = parseNote(e.text)
+    if (note) {
+      const r = await next(e)
+      if (r.drop === undefined) {
+        try {
+          const at = await $.clock.now()
+          await setItems($, cur =>
+            cur.map(i => (i.n === note.n && i.status !== 'done' ? { ...i, notes: [...i.notes, { text: note.text, at, status: 'seen' as const }] } : i)),
+          )
+        } catch {
+          // The card misses the note; the conversation has it.
+        }
+      }
+      return r
+    }
+    if (e.text.trimStart().startsWith('[needs-you]')) return next(e)
     let reminder = ''
     try {
-      // After a /clear or resume the list in memory is the old conversation's
-      // until turn.start restores the new one's: say nothing then.
-      if ((await $.session.id()) !== local.sessionId) return next(e)
-      // A note typed after the pane's prefix: the card shows it, and this
-      // message is what carries it to the model.
-      const note = parseNote(e.text)
-      if (note) {
-        const at = await $.clock.now()
-        await setItems($, cur =>
-          cur.map(i => (i.n === note.n && i.status !== 'done' ? { ...i, notes: [...i.notes, { text: note.text, at, status: 'seen' as const }] } : i)),
-        )
-      }
-      if (e.text.trimStart().startsWith('[needs-you]')) return next(e)
       const waiting = (await read($, items)).filter(i => i.status === 'open' && i.from !== 'you')
       if (waiting.length) reminder = openReminder(waiting)
     } catch {

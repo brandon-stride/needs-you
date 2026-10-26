@@ -62,7 +62,7 @@ function engine(on: On, stored: Record<string, unknown> = {}) {
   on('turn.complete', (_, e) => ({ text: e.answer }))
   on('prompt.submit', (_, e) => {
     contexts.push(e.context)
-    if (e.origin.kind === 'composer') return { text: e.text }
+    if (e.origin.kind === 'composer') return e.text.includes('REFUSE') ? { drop: 'refused beneath' } : { text: e.text }
     sent.push(e.text)
     asUser.push(e.origin.kind === 'plugin' && e.origin.asUser === true)
     return { text: e.text }
@@ -335,6 +335,9 @@ test("the person's typed message carries the waiting items for the model", async
   // A note typed after the pane's prefix lands on its card.
   await $.prompt.submit({ text: '[needs-you] #1 note: only if it stays under budget', origin: { kind: 'composer' } } as never)
   expect(String((await $.tool.call({ tool: 'mcp__needs-you__list' })).result)).toContain('notes: "only if it stays under budget"')
+  // A prompt refused beneath leaves no note behind.
+  await $.prompt.submit({ text: '[needs-you] #1 note: REFUSE this one', origin: { kind: 'composer' } } as never).catch(() => undefined)
+  expect(String((await $.tool.call({ tool: 'mcp__needs-you__list' })).result)).not.toContain('REFUSE')
   // The pane's own answers carry nothing extra.
   await $.prompt.submit({ text: '[needs-you] #1 "Which model?": done.', origin: { kind: 'composer' } } as never)
   expect(contexts.at(-1)).toBeUndefined()
