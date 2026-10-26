@@ -863,7 +863,7 @@ async function restoreSettings($: $T) {
   await resize($)
 }
 
-// Other sessions' lists: drop those of another shape, empty, or older than
+// Other sessions' lists: drop those of another shape, never used, or older than
 // KEEP_MS, and all but the newest KEEP_SESSIONS, so the store stays small.
 async function pruneStore($: $T) {
   const now = await $.clock.now()
@@ -872,7 +872,8 @@ async function pruneStore($: $T) {
   for (const key of await $.store.keys()) {
     if (!key.startsWith('items:') || key === mine) continue
     const v = asStored(await $.store.get(key))
-    if (v && v.items.length && now - v.at < KEEP_MS) kept.push({ key, at: v.at })
+    // A list with nothing left open still keeps its last number for a resume.
+    if (v && (v.items.length || v.lastN) && now - v.at < KEEP_MS) kept.push({ key, at: v.at })
     else await $.store.delete(key)
   }
   kept.sort((a, b) => b.at - a.at)
