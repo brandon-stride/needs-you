@@ -100,6 +100,9 @@ const live = atom({ plugin: 'needs-you', key: 'live' } as const, {
 // the working narration, folded to one line once its turn is over.
 const interim = atom({ plugin: 'needs-you', key: 'interim' } as const, [] as string[])
 const cursor = atom({ plugin: 'needs-you', key: 'cursor' } as const, '')
+// Kept by the host across a hot reload of this code, as the list is: a reload
+// finds the list it already has here and keeps it.
+const owner = atom({ plugin: 'needs-you', key: 'owner' } as const, { sessionId: '', lastN: 0 })
 
 // Per-load bookkeeping; a reload starts it over, the state above stays.
 const local = {
@@ -151,8 +154,11 @@ export const register: Register = on => {
   })
 
   on('session.start', async ($, e, next) => {
-    local.sessionId = await $.session.id()
-    await restore($, false)
+    await sessionKey($)
+    // A reload of this code: the list in memory is this session's and current;
+    // the stored copy may be older. Otherwise (a new process) read it back.
+    if ((await read($, owner)).sessionId === local.sessionId) await restoreSettings($)
+    else await restore($, false)
     $.clock.after(0, () => {
       void pruneStore($).catch(() => undefined)
     })
@@ -318,7 +324,7 @@ export const register: Register = on => {
     // until turn.start restores the new one's: say nothing then.
     let isSameSession = false
     try {
-      isSameSession = (await $.session.id()) === local.sessionId
+      isSameSession = (await $.session.id()) === (await read($, owner)).sessionId
     } catch {
       isSameSession = false
     }
@@ -366,7 +372,9 @@ export const register: Register = on => {
       const sid = await $.session.id()
       if (sid !== local.sessionId) {
         local.sessionId = sid
-        await restore($, true)
+        // Still the list's own session (this code was reloaded and its
+        // session.start has not run yet): nothing to change.
+        if ((await read($, owner)).sessionId !== sid) await restore($, true)
       }
       for (const id of local.assistantIds) local.knownIds.add(id)
       local.assistantIds = []
@@ -807,7 +815,7 @@ export const register: Register = on => {
 
 // What the store keeps per session: the list's not-done items under a shape
 // tag, and when it was written. A value of another shape is declined.
-type Stored = { shape: string; at: number; items: Item[] }
+type Stored = { shape: string; at: number; items: Item[]; lastN?: number }
 
 function asStored(raw: unknown): Stored | undefined {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined
@@ -822,10 +830,23 @@ async function restore($: $T, isNewSession: boolean) {
   const stored = asStored(await $.store.get(`items:${local.sessionId}`).catch(() => undefined))
   if (stored && stored.items.length) await update($, items, () => stored.items)
   else if (isNewSession) await update($, items, () => [])
+  await update($, owner, () => ({ sessionId: local.sessionId, lastN: stored?.lastN ?? 0 }))
   if (isNewSession) {
     await update($, interim, () => [])
     local.wokeFor = ''
   }
+  await restoreSettings($)
+}
+
+// The session id this code is working for. A tool call or press can reach
+// freshly reloaded code before its session.start has run: ask the host then,
+// so nothing is saved under an empty key.
+async function sessionKey($: $T): Promise<string> {
+  if (!local.sessionId) local.sessionId = await $.session.id()
+  return local.sessionId
+}
+
+async function restoreSettings($: $T) {
   const s = (await $.store.get(SETTINGS_KEY).catch(() => undefined)) as Partial<PaneSettings> | undefined
   if (s && typeof s === 'object') await update($, settings, cur => ({ ...cur, ...s }))
   else {
@@ -863,11 +884,14 @@ async function pruneStore($: $T) {
 // marking "seen" around a resolve) must not put the old list back.
 async function setItems($: $T, fn: (list: readonly Item[]) => Item[]) {
   const next = await update($, items, fn)
+  const sid = await sessionKey($)
+  const top = next.reduce((m, i) => Math.max(m, i.n), 0)
+  const own = await update($, owner, o => ({ sessionId: sid, lastN: Math.max(o.sessionId === sid ? o.lastN : 0, top) }))
   // The list in memory is what counts; a failed save (a full store) costs only
   // the copy a restart would read, so it is said once and the work goes on.
   try {
-    const value: Stored = { shape: STORE_SHAPE, at: await $.clock.now(), items: next.filter(i => i.status !== 'done') }
-    await $.store.set(`items:${local.sessionId}`, value)
+    const value: Stored = { shape: STORE_SHAPE, at: await $.clock.now(), items: next.filter(i => i.status !== 'done'), lastN: own.lastN }
+    await $.store.set(`items:${sid}`, value)
   } catch (err) {
     if (!local.storeWarned) {
       local.storeWarned = true
@@ -983,9 +1007,15 @@ async function pin(
   o: { agentId?: string; from?: string; isCounted?: boolean } = {},
 ): Promise<{ item: Item; isPlaced: boolean }> {
   const now = await $.clock.now()
-  const list = await read($, items)
-  const item = newItem(list, p, o.from ?? (await whoAsked($, o.agentId)), now, o.agentId)
-  await setItems($, cur => [...cur, item])
+  const from = o.from ?? (await whoAsked($, o.agentId))
+  const { lastN } = await read($, owner)
+  // Numbered inside the update, so two pins at once never share a number.
+  let item: Item | undefined
+  await setItems($, cur => {
+    item = newItem(cur, p, from, now, o.agentId, lastN)
+    return [...cur, item]
+  })
+  if (!item) throw new Error('the pin was not added')
   const counted = o.isCounted === false ? 0 : 1
   await update($, live, l => ({ ...l, pinsThisTurn: l.pinsThisTurn + counted, lastPinAt: now }))
   const opened = await $.ui.open(await openArgs($))

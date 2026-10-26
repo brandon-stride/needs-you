@@ -318,6 +318,16 @@ test('a second pin of the same ask is refused; not needed drops an item quietly'
   await ui.unmount()
 })
 
+test('numbers are never given out twice, at once or after a restart', async ($, on) => {
+  engine(on, { 'items:sess-1': { shape: 'items-2', at: 1, items: [], lastN: 7 } })
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const [a, b] = await Promise.all([
+    $.tool.call({ tool: 'mcp__needs-you__pin', kind: 'do', title: 'Mint a key' }),
+    $.tool.call({ tool: 'mcp__needs-you__pin', kind: 'do', title: 'Approve the night job' }),
+  ])
+  expect([String(a.result).slice(0, 9), String(b.result).slice(0, 9)].sort()).toEqual(['Pinned #8', 'Pinned #9'])
+})
+
 test('switches saved before the card view are kept', async ($, on) => {
   engine(on, { settings: { view: 'list', focus: false, catch: false, showDone: false } })
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })

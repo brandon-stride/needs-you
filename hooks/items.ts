@@ -105,8 +105,10 @@ export function nextWaiting(items: readonly Item[], id: string): Item | undefine
   return undefined
 }
 
-export function newItem(items: readonly Item[], pin: Pin, from: string, now: number, agentId?: string): Item {
-  const n = items.reduce((m, i) => Math.max(m, i.n), 0) + 1
+// `floor`: the highest number this session has given out, kept when finished
+// items are not (after a restart).
+export function newItem(items: readonly Item[], pin: Pin, from: string, now: number, agentId?: string, floor = 0): Item {
+  const n = items.reduce((m, i) => Math.max(m, i.n), floor) + 1
   const item: Item = {
     id: `n${n}-${now.toString(36)}`,
     n,

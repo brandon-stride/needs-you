@@ -64,6 +64,9 @@ declare module 'claude-code' {
       interim: string[]
       // The id of the item the card view shows.
       cursor: string
+      // Whose list is in memory (a session id), and the highest number given
+      // out in it, so a number is never handed out twice.
+      owner: { sessionId: string; lastN: number }
     }
   }
 }
