@@ -868,15 +868,16 @@ async function restoreSettings($: $T) {
 async function pruneStore($: $T) {
   const now = await $.clock.now()
   const mine = `items:${local.sessionId}`
-  const kept: { key: string; at: number }[] = []
+  const kept: { key: string; at: number; isOpen: boolean }[] = []
   for (const key of await $.store.keys()) {
     if (!key.startsWith('items:') || key === mine) continue
     const v = asStored(await $.store.get(key))
     // A list with nothing left open still keeps its last number for a resume.
-    if (v && (v.items.length || v.lastN) && now - v.at < KEEP_MS) kept.push({ key, at: v.at })
+    if (v && (v.items.length || v.lastN) && now - v.at < KEEP_MS) kept.push({ key, at: v.at, isOpen: v.items.length > 0 })
     else await $.store.delete(key)
   }
-  kept.sort((a, b) => b.at - a.at)
+  // Lists with items still open are kept before finished ones, newest first.
+  kept.sort((a, b) => Number(b.isOpen) - Number(a.isOpen) || b.at - a.at)
   for (const { key } of kept.slice(KEEP_SESSIONS)) await $.store.delete(key)
 }
 
