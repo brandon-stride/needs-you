@@ -308,9 +308,12 @@ export const register: Register = on => {
   // so an answer given in chat closes the item. Never in the way of the prompt.
   on('prompt.submit', async ($, e, next) => {
     const kind = e.origin.kind
-    if (e.command || (kind !== 'composer' && kind !== 'bridge') || e.text.trimStart().startsWith('[needs-you]')) return next(e)
+    if (e.command || e.isMeta || (kind !== 'composer' && kind !== 'bridge') || e.text.trimStart().startsWith('[needs-you]')) return next(e)
     let reminder = ''
     try {
+      // After a /clear or resume the list in memory is the old conversation's
+      // until turn.start restores the new one's: say nothing then.
+      if ((await $.session.id()) !== local.sessionId) return next(e)
       const waiting = (await read($, items)).filter(i => i.status === 'open' && i.from !== 'you')
       if (waiting.length) reminder = openReminder(waiting)
     } catch {
@@ -367,9 +370,13 @@ export const register: Register = on => {
     local.assistantIds = []
     local.cutIndex = 0
     if (fold.length) await update($, interim, prev => [...prev, ...fold.filter(id => !prev.includes(id))].slice(-INTERIM_CAP))
-    const list = await read($, items)
-    const kept = archiveSeen(list)
-    if (kept.some((i, k) => i !== list[k])) await setItems($, cur => archiveSeen(cur))
+    // Only after a turn that answered: a request that failed or was stopped may
+    // not have been read, so its items stay.
+    if (e.reason === 'answer') {
+      const list = await read($, items)
+      const kept = archiveSeen(list)
+      if (kept.some((i, k) => i !== list[k])) await setItems($, cur => archiveSeen(cur))
+    }
     const s = await read($, settings)
     if (s.catch && e.reason === 'answer' && l.pinsThisTurn === 0 && hasCue(e.answer)) {
       const answer = e.answer
@@ -805,6 +812,17 @@ async function restore($: $T, isNewSession: boolean) {
   }
   const s = (await $.store.get(SETTINGS_KEY).catch(() => undefined)) as Partial<PaneSettings> | undefined
   if (s && typeof s === 'object') await update($, settings, cur => ({ ...cur, ...s }))
+  else {
+    // Saved before the card view: keep the person's switches, not the old view.
+    const old = (await $.store.get('settings').catch(() => undefined)) as Partial<PaneSettings> | undefined
+    if (old && typeof old === 'object') {
+      const kept: Partial<PaneSettings> = {}
+      if (typeof old.focus === 'boolean') kept.focus = old.focus
+      if (typeof old.catch === 'boolean') kept.catch = old.catch
+      if (typeof old.showDone === 'boolean') kept.showDone = old.showDone
+      await update($, settings, cur => ({ ...cur, ...kept }))
+    }
+  }
   await resize($)
 }
 
@@ -1194,11 +1212,13 @@ async function catchFromReply($: $T, answer: string, turnId: string) {
   if (!pins.length || (await read($, live)).turnId !== turnId) return
   const pinned: Item[] = []
   for (const p of pins) {
+    // A turn started meanwhile: the rest is old news, and that turn pins its own.
+    if ((await read($, live)).turnId !== turnId) break
     // Already asked, by the model or an earlier catch: not twice.
     if (findSameAsk(await read($, items), p.title)) continue
     pinned.push((await pin($, p, { from: 'the last reply', isCounted: false })).item)
   }
-  if (!pinned.length) return
+  if (!pinned.length || (await read($, live)).turnId !== turnId) return
   // Tell the model, which never saw these pins, so it can resolve them.
   await appendRow($, caughtNote(pinned))
 }

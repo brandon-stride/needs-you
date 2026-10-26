@@ -40,11 +40,11 @@ const TOOL_ROW = {
 } as const
 
 // Nothing sits beneath the plugin: these hooks stand for the engine.
-function engine(on: On) {
+function engine(on: On, stored: Record<string, unknown> = {}) {
   const sent: string[] = []
   const asUser: boolean[] = []
   const contexts: (readonly string[] | undefined)[] = []
-  mock.store(on)
+  mock.store(on, stored)
   const clock = mock.clock(on, { now: 1_000_000 })
   on('session.id', () => ({ value: 'sess-1' }))
   on('tool.register', (_, e) => ({ value: { tool: `mcp__needs-you__${e.name}` } }))
@@ -270,6 +270,8 @@ test('the helpers: parsing, messages, seen and archived', () => {
   expect(isSameAsk('Flip six Clerk settings so the new text-code sign-in works fully', 'Turn on the six Clerk settings for text-code sign-in')).toBe(true)
   expect(isSameAsk('Notifications: let the browser fetch one static file without signing in?', 'Should the browser fetch one static file before sign-in for notifications?')).toBe(true)
   expect(isSameAsk('Approve the night job in the dashboard', 'Mint a key for the night job')).toBe(false)
+  expect(isSameAsk('Invite Alice to the billing workspace', 'Invite Bob to the billing workspace')).toBe(false)
+  expect(isSameAsk('Approve the production deploy for Alpha', 'Approve the production deploy for Bravo')).toBe(false)
 })
 
 test('the card shows every word of an item and steps to the next once answered', async ($, on) => {
@@ -311,12 +313,20 @@ test('a second pin of the same ask is refused; not needed drops an item quietly'
   await ui.unmount()
 })
 
+test('switches saved before the card view are kept', async ($, on) => {
+  engine(on, { settings: { view: 'list', focus: false, catch: false, showDone: false } })
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const r = await $.command.run(typed(''))
+  expect(String(r.text)).toContain('Focus mode is off')
+})
+
 test("the person's typed message carries the waiting items for the model", async ($, on) => {
   const { contexts } = engine(on)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   await $.tool.call({ tool: 'mcp__needs-you__pin', kind: 'decide', title: 'Which model?', options: ['Sonnet', 'Haiku'] })
   await $.prompt.submit({ text: 'go with sonnet', origin: { kind: 'composer' } } as never)
   expect(contexts.at(-1)?.join('\n') ?? '').toContain('#1 "Which model?"')
+  expect(contexts.at(-1)?.join('\n') ?? '').not.toContain('Do not mention')
   // The pane's own answers carry nothing extra.
   await $.prompt.submit({ text: '[needs-you] #1 "Which model?": done.', origin: { kind: 'composer' } } as never)
   expect(contexts.at(-1)).toBeUndefined()
