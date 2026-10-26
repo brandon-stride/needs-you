@@ -25,6 +25,12 @@ know) and takes their answers in place. README.md says what it does; this file s
   person has opened it by command).
 - Pane design decisions that stick: dark palette (`#0d0f12` pane, `#14171c` cards), one colour per
   kind on the card edge, compact filled chips instead of `[ label ]` buttons, no hotkeys on chips (the
-  engine prefixes them with `a:`), no expand/collapse, answered items fold to one line, the mascot
-  only in the minimized view, Escape closes the pane while it has focus.
+  engine prefixes them with `a:`), the mascot only in the minimized view, Escape closes the pane
+  while it has focus.
+- The pane is a narrow dock (at most 45% of the terminal), so it shows one item at a time in full (the
+  card view, the default) with `‹ ›` to step and `≡` for a list of titles; nothing on a card is cut
+  short. Pins are kept short at the source instead: `LIMITS` in `items.ts`, refused with the reason
+  when over, never clipped. (Brandon, 2026-10-26: asks were cut off and could not be opened.)
+- An item answered in the pane leaves at the end of the turn that read it; one answered in chat is
+  closed by the model, which sees the waiting items beside each typed message.
 - Conventional commits, lowercase, under 70 characters.

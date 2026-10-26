@@ -24,17 +24,21 @@ The pane docks beside the transcript in fullscreen terminals of 110 columns or m
 
 ## What you see
 
-Each card has a colour for its kind, the question in plain words, the reason, and the ways to answer:
+The pane shows one item at a time, every word of it: the question, the reason, and the ways to answer. `‹ ›` steps through them, `≡` lists them all by title (press a title to open it), and answering one moves on to the next one waiting.
+
+Each kind has a colour:
 
 | Kind | Colour | Answer with |
 | --- | --- | --- |
-| decide | amber | option chips, the recommendation starred, or `✓ go with it` |
+| decide | amber | one option per row, the recommendation starred |
 | do | clay | `✓ done` once you have done it |
 | know | sky | `✓ got it` |
 
-Every card also takes a note (context, a correction) and has `💬 chat`, which brings the item into the conversation.
+Every card also takes a note (context, a correction), has `💬 talk it over`, which brings the item into the conversation, and `✕ not needed`, which drops it and tells Claude.
 
-Your answer goes to Claude quietly while a turn runs, or as a prompt when the session is idle. An answered card folds to one line, "sending", then "Claude has it", and leaves once Claude resolves it. Helper agents can pin too; the card says who asked.
+Your answer goes to Claude quietly while a turn runs, or as a prompt when the session is idle. An answered item says "sending", then "Claude has it", and leaves when that turn ends. Answer in chat instead and Claude closes the item itself: it sees what is waiting beside each message you type. Helper agents can pin too; the card says who asked.
+
+Pins stay short so the narrow pane can show them whole: a title under 100 characters, a reason under 400, options of a few words. Claude gets the limits up front, and a pin over them, or one asking what an open item already asks, is sent back to it with the reason.
 
 **Focus mode** (on by default) hides tool rows in the transcript and folds Claude's working narration once a turn ends, so what stays on screen is the answer and the pane. Press `ctrl+o` to see everything, or turn it off below.
 
@@ -52,7 +56,8 @@ Your answer goes to Claude quietly while a turn runs, or as a prompt when the se
 | `/needs-you add <text>` | pin a reminder of your own |
 | `/needs-you focus on` / `off` | focus mode |
 | `/needs-you catch on` / `off` | the reply catcher, which pins questions Claude asked in prose but forgot to pin |
-| `/needs-you clear` | drop every item |
+| `/needs-you list` / `card` | the list of titles, or one item in full |
+| `/needs-you clear` | drop every item (Claude is told) |
 
 `─` minimizes the pane, `✕` or Escape closes it until the next pin. While items wait and the pane is off screen, a line under the prompt says so.
 

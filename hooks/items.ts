@@ -11,24 +11,81 @@ export const TOOL_RESOLVE = 'mcp__needs-you__resolve'
 export const TOOL_UPDATE = 'mcp__needs-you__update'
 export const TOOL_LIST = 'mcp__needs-you__list'
 
-export const DEFAULT_SETTINGS: PaneSettings = { view: 'list', focus: true, catch: true, showDone: false }
+export const DEFAULT_SETTINGS: PaneSettings = { view: 'card', focus: true, catch: true, showDone: false }
 
 export type Pin = { title: string; detail: string; kind: Kind; options: string[] }
+
+// The most a pin may say, in characters. The pane is a narrow column: a pin
+// over these is refused with the reason, never cut, so nothing is lost.
+export const LIMITS = { title: 100, detail: 400, option: 48 } as const
 
 // What the model sent to the pin tool, checked field by field: a plugin tool's
 // input arrives untyped.
 export function parsePin(args: Record<string, unknown>): { ok: true; pin: Pin } | { ok: false; why: string } {
-  const title = oneLine(String(args.title ?? '')).slice(0, 140)
+  const title = oneLine(String(args.title ?? ''))
   if (!title) return { ok: false, why: 'title is required: one plain line saying what you need from the person' }
+  if (title.length > LIMITS.title) {
+    return { ok: false, why: `the title is ${title.length} characters; keep it under ${LIMITS.title} and put the rest in detail` }
+  }
   const kind = KINDS.includes(args.kind as Kind) ? (args.kind as Kind) : 'know'
-  const detail = String(args.detail ?? '').trim().slice(0, 600)
-  const options = Array.isArray(args.options)
-    ? args.options.map(o => oneLine(String(o)).slice(0, 60)).filter(Boolean).slice(0, 4)
-    : []
+  const detail = String(args.detail ?? '').trim()
+  if (detail.length > LIMITS.detail) {
+    return {
+      ok: false,
+      why: `the detail is ${detail.length} characters; keep it under ${LIMITS.detail} (why, and what happens either way). Longer write-ups go in a file or page the detail points to`,
+    }
+  }
+  const options = Array.isArray(args.options) ? args.options.map(o => oneLine(String(o))).filter(Boolean).slice(0, 4) : []
+  const long = options.findIndex(o => o.length > LIMITS.option)
+  if (kind === 'decide' && long >= 0) {
+    return { ok: false, why: `option ${long + 1} is ${options[long]!.length} characters; keep each option under ${LIMITS.option}, a few words` }
+  }
   if (kind === 'decide' && options.length < 2) {
     return { ok: false, why: 'a decision needs 2 to 4 options, your recommendation first' }
   }
   return { ok: true, pin: { title, detail, kind, options: kind === 'decide' ? options : [] } }
+}
+
+// Words that carry a title's meaning: no short or common ones, a plural's s off.
+const STOP = new Set(
+  'the and for with your you this that from into onto before after without about should would could can will let one two new now its are was were has have had not but all any each our their them then than what which who how why when where'.split(' '),
+)
+
+function words(text: string): Set<string> {
+  const out = new Set<string>()
+  for (const w of text.toLowerCase().split(/[^a-z0-9]+/)) {
+    if (w.length < 3 || STOP.has(w)) continue
+    out.add(w.length > 4 && w.endsWith('s') ? w.slice(0, -1) : w)
+  }
+  return out
+}
+
+// Two titles asking the same thing: most of the shorter one's words are in the
+// other ("Flip six Clerk settings for text-code sign-in" and "Turn on the six
+// Clerk settings for text-code sign-in").
+export function isSameAsk(a: string, b: string): boolean {
+  const x = words(a)
+  const y = words(b)
+  let shared = 0
+  for (const w of x) if (y.has(w)) shared++
+  return shared >= 3 && shared / Math.min(x.size, y.size) >= 0.7
+}
+
+// A waiting item that already asks what `title` asks.
+export function findSameAsk(items: readonly Item[], title: string): Item | undefined {
+  return items.find(i => i.status === 'open' && isSameAsk(i.title, title))
+}
+
+// The waiting item to show after `id`, in list order, wrapping; none but `id`
+// waiting: undefined.
+export function nextWaiting(items: readonly Item[], id: string): Item | undefined {
+  const open = openItems(items)
+  const at = open.findIndex(i => i.id === id)
+  for (let k = 1; k <= open.length; k++) {
+    const i = open[(at + k) % open.length]!
+    if (i.id !== id && i.status === 'open') return i
+  }
+  return undefined
 }
 
 export function newItem(items: readonly Item[], pin: Pin, from: string, now: number, agentId?: string): Item {
@@ -88,20 +145,14 @@ export function markSeen(
   })
 }
 
-// How many main turns a seen item stays in the open list unresolved.
-export const ARCHIVE_TURNS = 6
-
-// A seen item stays as one dim line ("Claude has it") until the model resolves
-// it. One left unresolved leaves after ARCHIVE_TURNS main turns; a quiet one
-// (an ack, the person's own reminder) after the turn that carried it. Nothing
-// leaves while a note or chat request on it is still on its way.
-export function archiveSeen(items: readonly Item[], endedTurn: string): Item[] {
+// A seen item says "Claude has it" while the turn that read it runs; when a
+// main turn ends it leaves the list, resolved or not: the answer is in the
+// conversation. Nothing leaves while a note or chat request on it is on its way.
+export function archiveSeen(items: readonly Item[]): Item[] {
   return items.map(i => {
-    if (i.status !== 'seen' || i.seenTurn === endedTurn) return i
+    if (i.status !== 'seen') return i
     if (i.chatAt !== undefined || i.notes.some(n => n.status === 'sent')) return i
-    const age = (i.seenAge ?? 0) + 1
-    const limit = isQuietItem(i) ? 1 : ARCHIVE_TURNS
-    return age >= limit ? { ...i, status: 'done', seenAge: age } : { ...i, seenAge: age }
+    return { ...i, status: 'done' }
   })
 }
 
@@ -199,6 +250,19 @@ export function fyiFor(item: Item, answer: Answer): string {
 export const WAKE_TEXT =
   '[needs-you] The person answered in the Needs-you pane while you were finishing your last reply. Read the [needs-you] messages just above and act on them.'
 
+// What the model reads beside the person's typed message while items wait: the
+// person often answers in chat instead of the pane.
+export function openReminder(waiting: readonly Item[]): string {
+  const list = waiting.map(i => `#${i.n} "${i.title}"`).join(', ')
+  return `[needs-you] Waiting in the person's pane: ${list}. If this message answers, settles or cancels any of them, act on it and call ${TOOL_RESOLVE} for each in this turn. If it changes one, call ${TOOL_UPDATE}. Do not mention this note.`
+}
+
+// The hidden row when the person drops items from the pane.
+export function droppedNote(dropped: readonly Item[]): string {
+  const list = dropped.map(i => `#${i.n} "${i.title}"`).join(', ')
+  return `[needs-you] The person dismissed ${list} from the pane. Do not ask again unless it still blocks the work. No reply needed.`
+}
+
 // The hidden row after the reply catcher pinned asks from the last reply.
 export function caughtNote(pinned: readonly Item[]): string {
   const list = pinned.map(i => `#${i.n} "${i.title}"`).join(', ')
@@ -234,10 +298,11 @@ export function hasCue(answer: string): boolean {
   return answer.length > 20 && CUE.test(answer)
 }
 
-export const CATCH_SYSTEM = `You read the last reply of a coding assistant and pull out only the things the PERSON must now decide, do outside the chat, or know because it blocks or changes the work. Ignore things the assistant itself will do next, status updates, summaries, and rhetorical questions. Answer with a JSON array and nothing else. Each element: {"kind":"decide"|"do"|"know","title":"one plain line, no code names or jargon, under 100 characters","detail":"one or two plain sentences, may be empty","options":["only for decide: 2-4 short options, recommendation first"]}. Empty array when nothing needs the person.`
+export const CATCH_SYSTEM = `You read the last reply of a coding assistant and pull out only the things the PERSON must now decide, do outside the chat, or know because it blocks or changes the work. Ignore things the assistant itself will do next, status updates, summaries, rhetorical questions, and anything already pinned (listed with the reply). Answer with a JSON array and nothing else. Each element: {"kind":"decide"|"do"|"know","title":"one plain line, no code names or jargon, under ${LIMITS.title} characters","detail":"one or two plain sentences under ${LIMITS.detail} characters, may be empty","options":["only for decide: 2-4 options of a few words each, recommendation first"]}. Empty array when nothing needs the person.`
 
-export function catchPrompt(answer: string): string {
-  return `The reply:\n\n${answer.slice(0, 6000)}`
+export function catchPrompt(answer: string, pinned: readonly Item[] = []): string {
+  const already = pinned.length ? `Already pinned, skip these:\n${pinned.map(i => `- ${i.title}`).join('\n')}\n\n` : ''
+  return `${already}The reply:\n\n${answer.slice(0, 6000)}`
 }
 
 export function parseCaught(text: string): Pin[] {
@@ -285,19 +350,20 @@ export function parseCommand(args: string): { verb: string; rest: string } {
 }
 
 // How tall the pane wants to be while it sits inline above the prompt.
-export function wantedRows(items: readonly Item[], settings: PaneSettings): number {
+// `shown` is the item the card view is on.
+export function wantedRows(items: readonly Item[], settings: PaneSettings, shown?: Item): number {
   if (settings.view === 'icon') return 3
   const open = openItems(items)
   let rows = 2
-  for (const i of open) {
-    // An answered item is one line; an open one is a full card: title, detail,
-    // a line of chips, its notes, the note field, and a gap.
-    if (i.status !== 'open') {
-      rows += 2
-      continue
-    }
-    rows += 4 + Math.ceil(i.title.length / 36) + Math.ceil(i.detail.length / 40) + i.notes.length
+  if (settings.view === 'card' && shown) {
+    // The card: kind line, title, detail, one row per option, the second row
+    // of chips, its notes, the note field, and the gaps between.
+    rows += 9 + Math.ceil(shown.title.length / 40) + Math.ceil(shown.detail.length / 44) + shown.options.length + shown.notes.length
+    return Math.min(40, Math.max(3, rows))
   }
+  // The list: a row per item (its title wraps), and a gap.
+  for (const i of open) rows += 2 + Math.ceil(i.title.length / 44)
+  if (open.length === 0) rows += 2
   if (doneItems(items).length) rows += 1 + (settings.showDone ? doneItems(items).length : 0)
   return Math.min(40, Math.max(3, rows))
 }

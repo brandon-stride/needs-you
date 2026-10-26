@@ -8,6 +8,7 @@ import type { Item, Kind, Live, Note, PaneSettings } from '../types'
 import {
   CATCH_SYSTEM,
   DEFAULT_SETTINGS,
+  LIMITS,
   TOOL_LIST,
   TOOL_PIN,
   TOOL_RESOLVE,
@@ -17,9 +18,10 @@ import {
   avatarLine,
   catchPrompt,
   caughtNote,
-  clip,
   doneItems,
+  droppedNote,
   findByN,
+  findSameAsk,
   firstLine,
   fyiFor,
   hasCue,
@@ -28,9 +30,11 @@ import {
   markSeen,
   messageFor,
   newItem,
+  nextWaiting,
   normalize,
   oneLine,
   openItems,
+  openReminder,
   parseCaught,
   parseCommand,
   parsePin,
@@ -49,6 +53,7 @@ const INK = {
   pane: '#0d0f12',
   card: '#14171c',
   cardOpen: '#1a1e25',
+  body: '#b4bac4',
   mute: '#5c636e',
   chip: '#262b33',
   chipText: '#d7dbe2',
@@ -67,8 +72,6 @@ const PIC_ROWS = 5
 const PIC_SCALE = 3
 // A second "chat about this" on the same item within this long is ignored.
 const CHAT_MS = 15_000
-// Option labels on chips are cut to this many columns.
-const OPTION_COLS = 30
 // The store keeps other sessions' lists this long, and this many of them.
 const STORE_SHAPE = 'items-2'
 const KEEP_MS = 14 * 24 * 60 * 60 * 1000
@@ -80,7 +83,10 @@ type $T = EngineInterface
 
 // Bump a tag when its value's fields change: old values are then declined.
 const items = atom({ plugin: 'needs-you', key: 'items' } as const, [] as Item[], { shape: 'items-1' })
-const settings = atom({ plugin: 'needs-you', key: 'settings' } as const, { ...DEFAULT_SETTINGS } as PaneSettings, { shape: 'settings-1' })
+const settings = atom({ plugin: 'needs-you', key: 'settings' } as const, { ...DEFAULT_SETTINGS } as PaneSettings, { shape: 'settings-2' })
+// Where settings are stored across sessions: a new key when their meaning
+// changes (the card view became the default), so an old choice does not stick.
+const SETTINGS_KEY = 'settings-2'
 const live = atom({ plugin: 'needs-you', key: 'live' } as const, {
   isTurnRunning: false,
   turnId: '',
@@ -91,6 +97,7 @@ const live = atom({ plugin: 'needs-you', key: 'live' } as const, {
 // Assistant blocks of past turns that came before each turn's last tool call:
 // the working narration, folded to one line once its turn is over.
 const interim = atom({ plugin: 'needs-you', key: 'interim' } as const, [] as string[])
+const cursor = atom({ plugin: 'needs-you', key: 'cursor' } as const, '')
 
 // Per-load bookkeeping; a reload starts it over, the state above stays.
 const local = {
@@ -126,8 +133,8 @@ const SECTION = {
   scope: 'session',
   text: [
     '# The Needs-you pane',
-    `The person reads a side pane, not your transcript, for anything that needs them. Whenever you need the person to DECIDE something, DO something outside this chat (mint a key, click approve, pay, reply to someone), or KNOW something that blocks or changes the work, call ${TOOL_PIN} at that moment, not at the end of a long reply. One item per call. Plain words a stranger would follow: no code names, paths or jargon unless they must act on them; what and why, one line each. A decision lists 2 to 4 options, your recommendation first.`,
-    `A message containing [needs-you] is the person answering an item from the pane: act on it and call ${TOOL_RESOLVE} with that number once handled. A note on an item is added context: take it into account, and resolve only once the item is settled. One that says no reply is needed needs none. If the question of an open item changes, call ${TOOL_UPDATE}; do not pin it again. Never repeat an open item's question in prose; say "waiting on #3 in the pane" and move on. ${TOOL_LIST} shows what is open. Subagents pin too; the pane shows who asked.`,
+    `The person reads a side pane, not your transcript, for anything that needs them. Whenever you need the person to DECIDE something, DO something outside this chat (mint a key, click approve, pay, reply to someone), or KNOW something that blocks or changes the work, call ${TOOL_PIN} at that moment, not at the end of a long reply. One item per call. Plain words a stranger would follow: no code names, paths or jargon unless they must act on them; what and why, one line each. A decision lists 2 to 4 options of a few words each, your recommendation first. The pane is narrow: a title under ${LIMITS.title} characters, a detail under ${LIMITS.detail}; a longer write-up goes in a file or page the detail points to. Several decisions are several pins, one each.`,
+    `A message containing [needs-you] is the person answering an item from the pane: act on it and call ${TOOL_RESOLVE} with that number once handled. A note on an item is added context: take it into account, and resolve only once the item is settled. One that says no reply is needed needs none. When the person answers or settles an open item in chat instead, call ${TOOL_RESOLVE} for it in that turn. If the question of an open item changes, call ${TOOL_UPDATE}; do not pin it again. Never repeat an open item's question in prose; say "waiting on #3 in the pane" and move on. ${TOOL_LIST} shows what is open. Subagents pin too; the pane shows who asked.`,
   ].join('\n\n'),
 } as const
 
@@ -162,12 +169,16 @@ export const register: Register = on => {
               enum: ['decide', 'do', 'know'],
               description: 'decide: they pick. do: they act outside this chat. know: it blocks or changes the work.',
             },
-            title: { type: 'string', description: 'One plain line, under 100 characters, no jargon.' },
-            detail: { type: 'string', description: 'One or two plain sentences: why, and what happens either way. Optional.' },
+            title: { type: 'string', maxLength: LIMITS.title, description: `One plain line, under ${LIMITS.title} characters, no jargon.` },
+            detail: {
+              type: 'string',
+              maxLength: LIMITS.detail,
+              description: `One or two plain sentences, under ${LIMITS.detail} characters: why, and what happens either way. Optional.`,
+            },
             options: {
               type: 'array',
-              items: { type: 'string' },
-              description: 'decide only: 2 to 4 short options, your recommendation first.',
+              items: { type: 'string', maxLength: LIMITS.option },
+              description: `decide only: 2 to 4 options of a few words each (under ${LIMITS.option} characters), your recommendation first.`,
             },
           },
           required: ['kind', 'title'],
@@ -253,6 +264,12 @@ export const register: Register = on => {
   on('tool.call', { tool: TOOL_PIN }, async ($, e) => {
     const parsed = parsePin(e as Record<string, unknown>)
     if (!parsed.ok) return { result: `Not pinned: ${parsed.why}.` }
+    const twin = findSameAsk(await read($, items), parsed.pin.title)
+    if (twin) {
+      return {
+        result: `Not pinned: #${twin.n} is still waiting and asks nearly the same ("${twin.title}"). If the question changed, call ${TOOL_UPDATE} with n=${twin.n}. If #${twin.n} is settled, call ${TOOL_RESOLVE} on it first.`,
+      }
+    }
     const { item, isPlaced } = await pin($, parsed.pin, { agentId: e.agentId })
     return { result: pinReply(item, isPlaced) }
   }).catch(() => ({ result: 'Not pinned: the Needs-you pane failed. Ask the person in one plain line instead.' }))
@@ -286,6 +303,21 @@ export const register: Register = on => {
   on('tool.call', { tool: TOOL_LIST }, async $ => ({ result: listReply(await read($, items)) })).catch(() => ({
     result: 'The Needs-you pane is not answering.',
   }))
+
+  // The person's typed message, while items wait: the model is reminded of them,
+  // so an answer given in chat closes the item. Never in the way of the prompt.
+  on('prompt.submit', async ($, e, next) => {
+    const kind = e.origin.kind
+    if (e.command || (kind !== 'composer' && kind !== 'bridge') || e.text.trimStart().startsWith('[needs-you]')) return next(e)
+    let reminder = ''
+    try {
+      const waiting = (await read($, items)).filter(i => i.status === 'open' && i.from !== 'you')
+      if (waiting.length) reminder = openReminder(waiting)
+    } catch {
+      reminder = ''
+    }
+    return next(reminder ? { ...e, context: [...(e.context ?? []), reminder] } : e)
+  })
 
   on('prompt.compose', async ($, e, next) => {
     const r = await next(e)
@@ -336,8 +368,8 @@ export const register: Register = on => {
     local.cutIndex = 0
     if (fold.length) await update($, interim, prev => [...prev, ...fold.filter(id => !prev.includes(id))].slice(-INTERIM_CAP))
     const list = await read($, items)
-    const kept = archiveSeen(list, e.turnId)
-    if (kept.some((i, k) => i !== list[k])) await setItems($, cur => archiveSeen(cur, e.turnId))
+    const kept = archiveSeen(list)
+    if (kept.some((i, k) => i !== list[k])) await setItems($, cur => archiveSeen(cur))
     const s = await read($, settings)
     if (s.catch && e.reason === 'answer' && l.pinsThisTurn === 0 && hasCue(e.answer)) {
       const answer = e.answer
@@ -382,8 +414,13 @@ export const register: Register = on => {
       return { text: `Pinned #${item.n}: ${item.title}` }
     }
     if (verb === 'clear') {
-      await setItems($, cur => cur.map(i => (i.status === 'open' ? i : { ...i, status: 'done' as const })))
-      return { text: 'Answered items cleared.' }
+      const dropped = (await read($, items)).filter(i => i.status === 'open' && i.from !== 'you')
+      await setItems($, cur => cur.map(i => (i.status === 'done' ? i : { ...i, status: 'done' as const })))
+      if (dropped.length) await appendRow($, droppedNote(dropped))
+      return { text: 'Needs-you pane cleared.' }
+    }
+    if (verb === 'list' || verb === 'card') {
+      await setSettings($, { view: verb })
     }
     const opened = await $.ui.open({ ...(await openArgs($)), focus: true })
     local.paneIsPlaced = opened.isPlaced
@@ -512,7 +549,7 @@ export const register: Register = on => {
                       <Button
                         key={`o:${i.id}:${k}`}
                         plain
-                        label={k === 0 ? `★ ${clip(o, OPTION_COLS)}` : clip(o, OPTION_COLS)}
+                        label={k === 0 ? `★ ${o}` : o}
                         onPress={() => void answer($, i.id, { kind: 'option', text: o })}
                       />
                     ))}
@@ -541,9 +578,10 @@ export const register: Register = on => {
     // A chip: a compact button drawn as a filled label, one space of padding,
     // instead of the engine's wide `[ label ]`. The focus and the pointer invert it.
     // No hotkeys: the engine prefixes a plain button with `a:` for one, which clutters the chip.
-    const chip = (key: string, text: string, onPress: () => void, o: { hue?: string; dim?: boolean } = {}) => (
+    // `wrap`: a long label (an option) wraps inside its box instead of running off.
+    const chip = (key: string, text: string, onPress: () => void, o: { hue?: string; dim?: boolean; wrap?: boolean } = {}) => (
       <Button key={key} plain {...(o.dim ? { dimColor: true } : {})} onPress={onPress}>
-        <Text backgroundColor={o.hue ?? INK.chip} color={o.hue ? INK.pane : INK.chipText} bold={Boolean(o.hue)}>
+        <Text backgroundColor={o.hue ?? INK.chip} color={o.hue ? INK.pane : INK.chipText} bold={Boolean(o.hue)} {...(o.wrap ? { wrap: 'wrap' as const } : {})}>
           {` ${text} `}
         </Text>
       </Button>
@@ -557,108 +595,132 @@ export const register: Register = on => {
             <Text bold color={open.length ? INK.decide : INK.mute}>
               {waiting ? `${waiting} waiting` : 'all clear'}
             </Text>
-            {chip('view', '▸ open', () => void setSettings($, { view: 'list' }))}
+            {chip('view', '▸ open', () => void setSettings($, { view: 'card' }))}
           </Box>
         </Box>
       )
     }
 
-    return (
-      <Box flexDirection="column" backgroundColor={INK.pane} width={width} minHeight={bodyRows} paddingX={1}>
-        <Box flexDirection="row" justifyContent="space-between" marginBottom={1}>
-          <Box flexDirection="row" gap={1}>
-            <Text bold color={INK.do}>
-              Needs you
-            </Text>
-            {/* Under 40 columns the count alone, so the header keeps one row. */}
-            <Text dimColor>
-              {width < 40 ? (waiting ? String(waiting) : '') : waiting ? `${waiting} waiting on you` : open.length ? 'with Claude' : 'nothing waiting'}
-            </Text>
-          </Box>
-          <Box flexDirection="row" gap={1}>
-            {chip('view', '─', () => void setSettings($, { view: 'icon' }))}
-            {chip('close', '✕', () => void closePane($))}
-          </Box>
+    const kindWord = (k: Kind) => (k === 'decide' ? 'you decide' : k === 'do' ? 'you do' : 'for you to know')
+    const at = await read($, cursor)
+    const shown = s.view === 'card' ? shownItem(list, at) : undefined
+    const position = shown ? open.indexOf(shown) + 1 : 0
+    const status = waiting ? `${waiting} waiting on you` : open.length ? 'with Claude' : 'nothing waiting'
+    const canStep = shown !== undefined && open.length > 1
+
+    // The top row: what is waiting, then the controls. Under 48 columns the
+    // count alone, so it keeps one row.
+    const header = (
+      <Box flexDirection="row" justifyContent="space-between" marginBottom={1}>
+        <Box flexDirection="row" gap={1} flexShrink={1}>
+          <Text bold color={INK.do}>
+            Needs you
+          </Text>
+          <Text dimColor>{width >= 48 ? status : waiting ? String(waiting) : ''}</Text>
         </Box>
+        <Box flexDirection="row" gap={1} flexShrink={0}>
+          {canStep ? chip('prev', '‹', () => void step($, -1)) : null}
+          {canStep ? <Text dimColor>{`${position}/${open.length}`}</Text> : null}
+          {canStep ? chip('next', '›', () => void step($, 1)) : null}
+          {shown ? chip('list', '≡', () => void setSettings($, { view: 'list' })) : null}
+          {chip('min', '─', () => void setSettings($, { view: 'icon' }))}
+          {chip('close', '✕', () => void closePane($))}
+        </Box>
+      </Box>
+    )
 
-        {open.length === 0 && (
-          <Box flexDirection="column" paddingX={1}>
-            <Text dimColor>Claude pins what it needs from you here.</Text>
-            <Text dimColor>Try: /needs-you add something</Text>
-          </Box>
-        )}
+    const doneBlock =
+      done.length > 0 ? (
+        <Box flexDirection="column" marginTop={1}>
+          {/* A link-like toggle, not a chip: a filled chip keeps the engine's
+              focus inversion after the press and reads as "selected". */}
+          <Button key="done" plain dimColor onPress={() => void setSettings($, { showDone: !s.showDone })}>
+            {s.showDone ? `▴ hide ${done.length} done` : `▾ show ${done.length} done`}
+          </Button>
+          {s.showDone ? (
+            <Box flexDirection="column">
+              {done.slice(-12).map(i => (
+                <Text key={`done:${i.id}`} dimColor strikethrough wrap="truncate-end">
+                  {String(i.n)} {i.title}
+                </Text>
+              ))}
+            </Box>
+          ) : null}
+        </Box>
+      ) : null
 
-        {open.map(i => {
-          // An open item is a full card: title, why, the actions, a note line.
-          // Once answered it folds to one line that says where the answer is.
-          const hue = kindHue(i.kind)
-          const isOpen = i.status === 'open'
-          const state = i.status === 'sent' ? '… sending' : '✓ Claude has it'
-          const tick = i.kind === 'decide' ? 'go with it' : i.kind === 'do' ? 'done' : 'got it'
-          const fromAgent = i.from && i.from !== 'you' && i.from !== 'Claude' ? i.from : ''
-          if (!isOpen) {
-            return (
-              <Box key={`row:${i.id}`} flexDirection="row" marginBottom={1}>
-                <Box width={1} flexShrink={0} backgroundColor={INK.mute} />
-                <Box flexDirection="row" flexGrow={1} gap={1} paddingX={1} justifyContent="space-between">
-                  <Box flexGrow={1} flexShrink={1}>
-                    <Text dimColor wrap="truncate-end">
-                      {i.n} {i.title}
-                      {i.answer ? ` → ${i.answer}` : ''}
-                    </Text>
-                  </Box>
-                  <Box flexShrink={0}>
-                    <Text dimColor>{state}</Text>
-                  </Box>
-                </Box>
+    // The card: one item in full, every word of it, with the ways to answer.
+    // The pane is a narrow column, so it shows one thing at a time and steps.
+    if (shown) {
+      const i = shown
+      const isOpen = i.status === 'open'
+      const hue = isOpen ? kindHue(i.kind) : INK.mute
+      // Inside the card: pane padding (2), the colour bar (1), card padding (2).
+      const inner = Math.max(16, width - 5)
+      const tick = i.kind === 'do' ? 'done' : 'got it'
+      const fromAgent = i.from && i.from !== 'you' && i.from !== 'Claude' ? i.from : ''
+      return (
+        <Box flexDirection="column" backgroundColor={INK.pane} width={width} minHeight={bodyRows} paddingX={1}>
+          {header}
+          <Box key={`card:${i.id}`} flexDirection="row">
+            <Box width={1} flexShrink={0} backgroundColor={hue} />
+            <Box flexDirection="column" flexGrow={1} backgroundColor={INK.card} paddingX={1} paddingY={1}>
+              <Box flexDirection="row" gap={1}>
+                <Text backgroundColor={hue} color={INK.pane} bold>
+                  {` ${i.n} `}
+                </Text>
+                <Text color={hue} bold>
+                  {kindWord(i.kind)}
+                </Text>
+                {fromAgent ? <Text dimColor wrap="truncate-end">{`from ${fromAgent}`}</Text> : null}
               </Box>
-            )
-          }
-          return (
-            <Box key={`row:${i.id}`} flexDirection="row" marginBottom={1}>
-              <Box width={1} flexShrink={0} backgroundColor={hue} />
-              <Box flexDirection="column" flexGrow={1} backgroundColor={INK.card} paddingX={1}>
-                <Box flexDirection="row" gap={1}>
-                  <Text backgroundColor={hue} color={INK.pane} bold>
-                    {` ${i.n} `}
+              <Box width={inner} marginTop={1}>
+                <Text bold wrap="wrap">
+                  {i.title}
+                </Text>
+              </Box>
+              {i.detail !== '' && (
+                <Box width={inner} marginTop={1}>
+                  <Text color={INK.body} wrap="wrap">
+                    {i.detail}
                   </Text>
-                  <Box flexGrow={1} width={width - 10}>
-                    <Text wrap="wrap" bold>
-                      {i.title}
-                      {fromAgent ? <Text dimColor>{`  from ${fromAgent}`}</Text> : null}
-                    </Text>
-                  </Box>
                 </Box>
-                {i.detail !== '' && (
-                  <Box width={width - 6} paddingLeft={4}>
-                    <Text wrap="wrap" dimColor>
-                      {i.detail}
-                    </Text>
-                  </Box>
-                )}
-                <Box flexDirection="row" flexWrap="wrap" gap={1} paddingLeft={4} marginTop={1}>
+              )}
+              {isOpen ? (
+                <Box flexDirection="column" marginTop={1} width={inner} rowGap={1}>
+                  {/* One option to a row, whole: the recommendation first and filled. */}
                   {i.options.length > 0
-                    ? i.options.map((o, k) =>
-                        chip(
-                          `o:${i.id}:${k}`,
-                          k === 0 ? `★ ${clip(o, OPTION_COLS)}` : clip(o, OPTION_COLS),
-                          () => void answer($, i.id, { kind: 'option', text: o }),
-                          k === 0 ? { hue } : {},
-                        ),
-                      )
+                    ? i.options.map((o, k) => (
+                        <Box key={`ob:${i.id}:${k}`} width={inner}>
+                          {chip(`o:${i.id}:${k}`, k === 0 ? `★ ${o}` : `  ${o}`, () => void answer($, i.id, { kind: 'option', text: o }), {
+                            ...(k === 0 ? { hue } : {}),
+                            wrap: true,
+                          })}
+                        </Box>
+                      ))
                     : chip(`d:${i.id}`, `✓ ${tick}`, () => void answer($, i.id, { kind: 'check' }), { hue })}
-                  {chip(`c:${i.id}`, '💬 chat', () => void answer($, i.id, { kind: 'chat' }))}
-                </Box>
-                {i.notes.map((n, k) => (
-                  <Box key={`note:${i.id}:${k}`} paddingLeft={4}>
-                    <Text dimColor wrap="wrap">
-                      {n.status === 'seen' ? '✓' : '…'} {n.text}
-                    </Text>
+                  <Box flexDirection="row" flexWrap="wrap" gap={1}>
+                    {chip(`c:${i.id}`, '💬 talk it over', () => void answer($, i.id, { kind: 'chat' }))}
+                    {chip(`x:${i.id}`, '✕ not needed', () => void dismiss($, i.id), { dim: true })}
                   </Box>
-                ))}
-                {/* The field needs a width of its own, or a long note runs off the card:
-                    pane padding (2), the colour bar (1), card padding (2), the indent (4). */}
-                <Box flexDirection="row" paddingLeft={4} width={width - 2}>
+                </Box>
+              ) : (
+                <Box width={inner} marginTop={1}>
+                  <Text dimColor wrap="wrap">
+                    {i.answer ? `→ ${i.answer}   ` : ''}
+                    {i.status === 'sent' ? '… sending' : '✓ Claude has it'}
+                  </Text>
+                </Box>
+              )}
+              {i.notes.map((n, k) => (
+                <Box key={`note:${i.id}:${k}`} width={inner}>
+                  <Text dimColor wrap="wrap">
+                    {n.status === 'seen' ? '✓' : '…'} {n.text}
+                  </Text>
+                </Box>
+              ))}
+              {isOpen ? (
+                <Box flexDirection="row" width={inner} marginTop={1}>
                   <Input
                     key={`n:${i.id}`}
                     placeholder="✎ add a note"
@@ -671,29 +733,48 @@ export const register: Register = on => {
                     onSubmit={v => void answer($, i.id, { kind: 'note', text: v })}
                   />
                 </Box>
+              ) : null}
+            </Box>
+          </Box>
+        </Box>
+      )
+    }
+
+    // The list: a row per item, its title whole; a row opens its card.
+    return (
+      <Box flexDirection="column" backgroundColor={INK.pane} width={width} minHeight={bodyRows} paddingX={1}>
+        {header}
+
+        {open.length === 0 && (
+          <Box flexDirection="column" paddingX={1}>
+            <Text dimColor>Claude pins what it needs from you here.</Text>
+            <Text dimColor>Try: /needs-you add something</Text>
+          </Box>
+        )}
+
+        {open.map(i => {
+          const isOpen = i.status === 'open'
+          const hue = isOpen ? kindHue(i.kind) : INK.mute
+          const state = i.status === 'sent' ? '… sending' : '✓ Claude has it'
+          const meta = isOpen ? kindWord(i.kind) : `${i.answer ? `→ ${i.answer}   ` : ''}${state}`
+          return (
+            <Box key={`row:${i.id}`} flexDirection="row" marginBottom={1} hover={{ backgroundColor: INK.cardOpen }}>
+              <Box width={1} flexShrink={0} backgroundColor={hue} />
+              <Box flexDirection="column" flexGrow={1} paddingX={1} width={width - 3}>
+                <Button key={`open:${i.id}`} plain onPress={() => void show($, i.id)}>
+                  <Text bold={isOpen} dimColor={!isOpen} wrap="wrap">
+                    {`${i.n}  ${i.title}`}
+                  </Text>
+                </Button>
+                <Text color={isOpen ? hue : undefined} dimColor={!isOpen} wrap="wrap">
+                  {meta}
+                </Text>
               </Box>
             </Box>
           )
         })}
 
-        {done.length > 0 && (
-          <Box flexDirection="column" marginTop={1}>
-            {/* A link-like toggle, not a chip: a filled chip keeps the engine's
-                focus inversion after the press and reads as "selected". */}
-            <Button key="done" plain dimColor onPress={() => void setSettings($, { showDone: !s.showDone })}>
-              {s.showDone ? `▴ hide ${done.length} done` : `▾ show ${done.length} done`}
-            </Button>
-            {s.showDone ? (
-              <Box flexDirection="column">
-                {done.slice(-12).map(i => (
-                  <Text key={`done:${i.id}`} dimColor strikethrough>
-                    {String(i.n)} {i.title}
-                  </Text>
-                ))}
-              </Box>
-            ) : null}
-          </Box>
-        )}
+        {doneBlock}
       </Box>
     )
   })
@@ -722,7 +803,7 @@ async function restore($: $T, isNewSession: boolean) {
     await update($, interim, () => [])
     local.wokeFor = ''
   }
-  const s = (await $.store.get('settings').catch(() => undefined)) as Partial<PaneSettings> | undefined
+  const s = (await $.store.get(SETTINGS_KEY).catch(() => undefined)) as Partial<PaneSettings> | undefined
   if (s && typeof s === 'object') await update($, settings, cur => ({ ...cur, ...s }))
   await resize($)
 }
@@ -765,7 +846,7 @@ async function setItems($: $T, fn: (list: readonly Item[]) => Item[]) {
 
 async function setSettings($: $T, patch: Partial<PaneSettings>) {
   const next = await update($, settings, s => ({ ...s, ...patch }))
-  await $.store.set('settings', next)
+  await $.store.set(SETTINGS_KEY, next)
   await resize($)
 }
 
@@ -775,7 +856,42 @@ async function title($: $T): Promise<string> {
 }
 
 async function rows($: $T): Promise<number> {
-  return wantedRows(await read($, items), await read($, settings))
+  const list = await read($, items)
+  return wantedRows(list, await read($, settings), shownItem(list, await read($, cursor)))
+}
+
+// The item the card view shows: the one the cursor is on while it is in the
+// list, else the first one waiting on the person, else the first in the list.
+function shownItem(list: readonly Item[], at: string): Item | undefined {
+  const open = openItems(list)
+  return open.find(i => i.id === at) ?? open.find(i => i.status === 'open') ?? open[0]
+}
+
+// The person picked an item from the list, or stepped through the cards.
+async function show($: $T, id: string) {
+  await update($, cursor, () => id)
+  if ((await read($, settings)).view !== 'card') await setSettings($, { view: 'card' })
+  else await resize($)
+}
+
+async function step($: $T, by: number) {
+  const list = await read($, items)
+  const open = openItems(list)
+  const here = shownItem(list, await read($, cursor))
+  if (!here || open.length < 2) return
+  const at = open.findIndex(i => i.id === here.id)
+  await show($, open[(at + by + open.length) % open.length]!.id)
+}
+
+// The person dropped an item they do not want to answer: it leaves, and the
+// model is told quietly (a reminder of their own needs no word).
+async function dismiss($: $T, id: string) {
+  const item = (await read($, items)).find(i => i.id === id)
+  if (!item || item.status === 'done') return
+  const next = nextWaiting(await read($, items), id)
+  if (next) await update($, cursor, () => next.id)
+  await setItems($, cur => cur.map(i => (i.id === id ? { ...i, status: 'done' as const } : i)))
+  if (item.from !== 'you') await appendRow($, droppedNote([item]))
 }
 
 // The pane follows its content: a re-open with the same id only re-sizes. A
@@ -898,6 +1014,11 @@ async function handleAnswer($: $T, id: string, given: Answer) {
   // after this, so its requests do carry it.
   if (agentId || isRunning || quiet) local.holding.add(id)
 
+  // A tick or a choice moves the card view on to the next item waiting.
+  if (a.kind === 'check' || a.kind === 'option') {
+    const next = nextWaiting(await read($, items), id)
+    if (next) await update($, cursor, () => next.id)
+  }
   const note = a.kind === 'note' ? { text: a.text, at: now, status: 'sent' as const } : undefined
   await patchItem($, id, i => markSent(i, a, now, note))
   if (note) local.drafts[id] = ''
@@ -1062,7 +1183,7 @@ async function catchFromReply($: $T, answer: string, turnId: string) {
   const r = await $.model.complete({
     model: 'haiku',
     system: CATCH_SYSTEM,
-    prompt: catchPrompt(answer),
+    prompt: catchPrompt(answer, openItems(await read($, items))),
     maxTokens: 700,
     effort: 'low',
     timeoutMs: 30_000,
@@ -1072,7 +1193,12 @@ async function catchFromReply($: $T, answer: string, turnId: string) {
   // A new turn has started: the reply is old news, and that turn pins its own.
   if (!pins.length || (await read($, live)).turnId !== turnId) return
   const pinned: Item[] = []
-  for (const p of pins) pinned.push((await pin($, p, { from: 'the last reply', isCounted: false })).item)
+  for (const p of pins) {
+    // Already asked, by the model or an earlier catch: not twice.
+    if (findSameAsk(await read($, items), p.title)) continue
+    pinned.push((await pin($, p, { from: 'the last reply', isCounted: false })).item)
+  }
+  if (!pinned.length) return
   // Tell the model, which never saw these pins, so it can resolve them.
   await appendRow($, caughtNote(pinned))
 }

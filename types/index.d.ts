@@ -33,11 +33,12 @@ export type Item = {
   // A "chat about this" no model request has carried yet.
   chatAt?: number
   seenTurn?: string
-  // Main turns ended since it was seen; it is archived after a few.
+  // Left from the turn-count archive; no longer read or written.
   seenAge?: number
 }
 
-export type View = 'icon' | 'list'
+// icon: the mascot alone. list: a row per item. card: one item in full.
+export type View = 'icon' | 'list' | 'card'
 
 export type PaneSettings = {
   view: View
@@ -61,6 +62,8 @@ declare module 'claude-code' {
       settings: Shaped<PaneSettings>
       live: Live
       interim: string[]
+      // The id of the item the card view shows.
+      cursor: string
     }
   }
 }
