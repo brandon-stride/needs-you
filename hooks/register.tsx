@@ -730,13 +730,16 @@ export const register: Register = on => {
                   </Text>
                 </Box>
               ))}
+              {/* One row: a note is sent as one line anyway, and a taller field
+                  makes the engine draw its "shift+⏎ new line" hint on the
+                  typing row, which squeezes the text to a few words. */}
               {isOpen ? (
                 <Box flexDirection="row" width={inner} marginTop={1}>
                   <Input
                     key={`n:${i.id}`}
-                    placeholder="✎ add a note"
+                    placeholder="✎ add a note, ⏎ sends it"
                     submitLabel=" "
-                    rows={2}
+                    rows={1}
                     value={local.drafts[i.id] ?? ''}
                     onInput={v => {
                       local.drafts[i.id] = v
