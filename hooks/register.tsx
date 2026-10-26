@@ -180,6 +180,10 @@ export const register: Register = on => {
               items: { type: 'string', maxLength: LIMITS.option },
               description: `decide only: 2 to 4 options of a few words each (under ${LIMITS.option} characters), your recommendation first.`,
             },
+            distinct: {
+              type: 'boolean',
+              description: 'Only after a pin was refused as a repeat: true when this really is a different ask from the waiting one.',
+            },
           },
           required: ['kind', 'title'],
         },
@@ -264,10 +268,10 @@ export const register: Register = on => {
   on('tool.call', { tool: TOOL_PIN }, async ($, e) => {
     const parsed = parsePin(e as Record<string, unknown>)
     if (!parsed.ok) return { result: `Not pinned: ${parsed.why}.` }
-    const twin = findSameAsk(await read($, items), parsed.pin.title)
+    const twin = (e as Record<string, unknown>).distinct === true ? undefined : findSameAsk(await read($, items), parsed.pin.title)
     if (twin) {
       return {
-        result: `Not pinned: #${twin.n} is still waiting and asks nearly the same ("${twin.title}"). If the question changed, call ${TOOL_UPDATE} with n=${twin.n}. If #${twin.n} is settled, call ${TOOL_RESOLVE} on it first.`,
+        result: `Not pinned: #${twin.n} is still waiting and asks nearly the same (${JSON.stringify(twin.title)}). If the question changed, call ${TOOL_UPDATE} with n=${twin.n}. If #${twin.n} is settled, call ${TOOL_RESOLVE} on it first. If this is a different ask (another person, project or number), pin again with distinct: true.`,
       }
     }
     const { item, isPlaced } = await pin($, parsed.pin, { agentId: e.agentId })

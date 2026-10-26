@@ -306,11 +306,13 @@ test('a second pin of the same ask is refused; not needed drops an item quietly'
   await $.tool.call({ tool: 'mcp__needs-you__pin', kind: 'do', title: 'Flip six Clerk settings so the new text-code sign-in works fully' })
   const again = await $.tool.call({ tool: 'mcp__needs-you__pin', kind: 'do', title: 'Turn on the six Clerk settings for text-code sign-in' })
   expect(String(again.result)).toStartWith('Not pinned: #1')
+  const different = await $.tool.call({ tool: 'mcp__needs-you__pin', kind: 'do', title: 'Turn on the six Clerk settings for text-code sign-in', distinct: true })
+  expect(String(different.result)).toStartWith('Pinned #2')
 
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   const drop = (await ui.findAll({ type: 'Button' })).find(b => b.key?.startsWith('x:'))!
   await ui.press({ key: drop.key! })
-  expect(String((await $.tool.call({ tool: 'mcp__needs-you__list' })).result)).toBe('Nothing is pinned.')
+  expect(String((await $.tool.call({ tool: 'mcp__needs-you__list' })).result)).not.toContain('#1')
   const rows = session.appended().map(r => JSON.stringify(r.message.content))
   expect(rows.some(r => r.includes('dismissed #1'))).toBe(true)
   await ui.unmount()
