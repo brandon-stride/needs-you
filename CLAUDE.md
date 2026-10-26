@@ -31,6 +31,9 @@ know) and takes their answers in place. README.md says what it does; this file s
   card view, the default) with `‹ ›` to step and `≡` for a list of titles; nothing on a card is cut
   short. Pins are kept short at the source instead: `LIMITS` in `items.ts`, refused with the reason
   when over, never clipped. (Brandon, 2026-10-26: asks were cut off and could not be opened.)
+- Notes are typed in the main prompt box (`✎ note` fills `[needs-you] #n note: `), not in an Input in the
+  pane: the engine draws an Input's `⏎` tag right after the typed text and squeezes a multi-row field
+  (checked live 2026-10-26).
 - An item answered in the pane leaves at the end of the turn that read it; one answered in chat is
   closed by the model, which sees the waiting items beside each typed message.
 - Conventional commits, lowercase, under 70 characters.

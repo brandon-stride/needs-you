@@ -332,6 +332,9 @@ test("the person's typed message carries the waiting items for the model", async
   await $.prompt.submit({ text: 'go with sonnet', origin: { kind: 'composer' } } as never)
   expect(contexts.at(-1)?.join('\n') ?? '').toContain('#1 "Which model?"')
   expect(contexts.at(-1)?.join('\n') ?? '').not.toContain('Do not mention')
+  // A note typed after the pane's prefix lands on its card.
+  await $.prompt.submit({ text: '[needs-you] #1 note: only if it stays under budget', origin: { kind: 'composer' } } as never)
+  expect(String((await $.tool.call({ tool: 'mcp__needs-you__list' })).result)).toContain('notes: "only if it stays under budget"')
   // The pane's own answers carry nothing extra.
   await $.prompt.submit({ text: '[needs-you] #1 "Which model?": done.', origin: { kind: 'composer' } } as never)
   expect(contexts.at(-1)).toBeUndefined()

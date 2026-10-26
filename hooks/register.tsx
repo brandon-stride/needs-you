@@ -31,12 +31,14 @@ import {
   messageFor,
   newItem,
   nextWaiting,
+  notePrefix,
   normalize,
   oneLine,
   openItems,
   openReminder,
   parseCaught,
   parseCommand,
+  parseNote,
   parsePin,
   pendingKey,
   personMessageFor,
@@ -103,7 +105,6 @@ const cursor = atom({ plugin: 'needs-you', key: 'cursor' } as const, '')
 const local = {
   sessionId: '',
   paneIsPlaced: false,
-  drafts: {} as Record<string, string>,
   // Assistant blocks first drawn during the running main turn, in order, and
   // every block drawn before it began (a re-draw of an old one is not new).
   assistantIds: [] as string[],
@@ -312,12 +313,22 @@ export const register: Register = on => {
   // so an answer given in chat closes the item. Never in the way of the prompt.
   on('prompt.submit', async ($, e, next) => {
     const kind = e.origin.kind
-    if (e.command || e.isMeta || (kind !== 'composer' && kind !== 'bridge') || e.text.trimStart().startsWith('[needs-you]')) return next(e)
+    if (e.command || e.isMeta || (kind !== 'composer' && kind !== 'bridge')) return next(e)
     let reminder = ''
     try {
       // After a /clear or resume the list in memory is the old conversation's
       // until turn.start restores the new one's: say nothing then.
       if ((await $.session.id()) !== local.sessionId) return next(e)
+      // A note typed after the pane's prefix: the card shows it, and this
+      // message is what carries it to the model.
+      const note = parseNote(e.text)
+      if (note) {
+        const at = await $.clock.now()
+        await setItems($, cur =>
+          cur.map(i => (i.n === note.n && i.status !== 'done' ? { ...i, notes: [...i.notes, { text: note.text, at, status: 'seen' as const }] } : i)),
+        )
+      }
+      if (e.text.trimStart().startsWith('[needs-you]')) return next(e)
       const waiting = (await read($, items)).filter(i => i.status === 'open' && i.from !== 'you')
       if (waiting.length) reminder = openReminder(waiting)
     } catch {
@@ -574,7 +585,7 @@ export const register: Register = on => {
     }
 
     const ui = $.ui.resolve(e)
-    const { Box, Text, Button, Input } = ui
+    const { Box, Text, Button } = ui
     // The terminal draws Clawd as a picture (kitty graphics), or as half-block
     // cells once a blit says pictures cannot be drawn; other surfaces get the face.
     const mascot =
@@ -711,6 +722,7 @@ export const register: Register = on => {
                       ))
                     : chip(`d:${i.id}`, `✓ ${tick}`, () => void answer($, i.id, { kind: 'check' }), { hue })}
                   <Box flexDirection="row" flexWrap="wrap" gap={1}>
+                    {chip(`n:${i.id}`, '✎ note', () => void startNote($, i))}
                     {chip(`c:${i.id}`, '💬 talk it over', () => void answer($, i.id, { kind: 'chat' }))}
                     {chip(`x:${i.id}`, '✕ not needed', () => void dismiss($, i.id), { dim: true })}
                   </Box>
@@ -730,24 +742,6 @@ export const register: Register = on => {
                   </Text>
                 </Box>
               ))}
-              {/* One row: a note is sent as one line anyway, and a taller field
-                  makes the engine draw its "shift+⏎ new line" hint on the
-                  typing row, which squeezes the text to a few words. */}
-              {isOpen ? (
-                <Box flexDirection="row" width={inner} marginTop={1}>
-                  <Input
-                    key={`n:${i.id}`}
-                    placeholder="✎ add a note, ⏎ sends it"
-                    submitLabel=" "
-                    rows={1}
-                    value={local.drafts[i.id] ?? ''}
-                    onInput={v => {
-                      local.drafts[i.id] = v
-                    }}
-                    onSubmit={v => void answer($, i.id, { kind: 'note', text: v })}
-                  />
-                </Box>
-              ) : null}
             </Box>
           </Box>
         </Box>
@@ -1046,12 +1040,10 @@ async function handleAnswer($: $T, id: string, given: Answer) {
   }
   const note = a.kind === 'note' ? { text: a.text, at: now, status: 'sent' as const } : undefined
   await patchItem($, id, i => markSent(i, a, now, note))
-  if (note) local.drafts[id] = ''
 
   const r = await deliver($, item, a, { agentId, quiet })
   if ('failed' in r) {
     await patchItem($, id, i => unmarkSent(i, item, a, note))
-    if (a.kind === 'note') local.drafts[id] = a.text
     if (a.kind === 'chat') delete local.chatAt[id]
     $.ui.toast(`Needs you #${item.n}: not delivered (${r.failed}). It is still open; try again.`)
     return
@@ -1061,6 +1053,16 @@ async function handleAnswer($: $T, id: string, given: Answer) {
   local.holding.delete(id)
   // The turn ended while the row went in: nothing will read it until a turn starts.
   if (!r.submitted && !r.to && !quiet && !(await read($, live)).isTurnRunning) await wakeIfStranded($)
+}
+
+// A note is typed in the main prompt box, at full width with its usual hints,
+// after "[needs-you] #n note: "; whatever was drafted there stays after it.
+async function startNote($: $T, item: Item) {
+  const prefix = notePrefix(item.n)
+  const box = await $.prompt.read()
+  const text = box.text.startsWith(prefix) ? box.text : prefix + box.text
+  const r = await $.prompt.fill({ text, mode: 'replace' })
+  if (!r.isFilled) $.ui.toast(`Needs you: the prompt box would not take the note${r.refusal === 'dialog' ? ' while a dialog is open' : ''}.`)
 }
 
 async function patchItem($: $T, id: string, fn: (i: Item) => Item) {

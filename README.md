@@ -34,7 +34,7 @@ Each kind has a colour:
 | do | clay | `✓ done` once you have done it |
 | know | sky | `✓ got it` |
 
-Every card also takes a note (context, a correction), has `💬 talk it over`, which brings the item into the conversation, and `✕ not needed`, which drops it and tells Claude.
+Every card has `✎ note`, which puts `[needs-you] #2 note: ` in your prompt box so you type the note there (context, a correction) and Enter sends it, plus `💬 talk it over`, which brings the item into the conversation, and `✕ not needed`, which drops it and tells Claude.
 
 Your answer goes to Claude quietly while a turn runs, or as a prompt when the session is idle. An answered item says "sending", then "Claude has it", and leaves when that turn ends. Answer in chat instead and Claude closes the item itself: it sees what is waiting beside each message you type. Helper agents can pin too; the card says who asked.
 
